@@ -1,0 +1,73 @@
+from __future__ import annotations
+
+import math
+from decimal import Decimal, InvalidOperation
+from typing import Any
+
+import pandas as pd
+
+from .models import CashEvent
+
+
+CASH_PRODUCT = "<CASH>"
+
+
+def parse_decimal_eu(x: Any) -> Decimal:
+    """
+    Parses European decimals:
+      - "1.234,56" -> 1234.56
+      - "-44,41"   -> -44.41
+    """
+    if x is None:
+        return Decimal("0")
+    if isinstance(x, float) and math.isnan(x):
+        return Decimal("0")
+    s = str(x).strip()
+    if s == "" or s.lower() == "nan":
+        return Decimal("0")
+    s = s.replace(".", "").replace(",", ".")
+    try:
+        return Decimal(s)
+    except InvalidOperation:
+        raise ValueError(f"Could not parse decimal from: {x!r}")
+
+
+def norm_str(x: Any) -> str:
+    if x is None:
+        return ""
+    if isinstance(x, float) and math.isnan(x):
+        return ""
+    return str(x).strip()
+
+
+def load_degiro_csv(path: str) -> pd.DataFrame:
+    df = pd.read_csv(path)
+
+    # Expected DEGIRO export quirks:
+    # Mutatie = currency, Unnamed: 8 = amount
+    # Saldo   = currency, Unnamed: 10 = balance
+    required = {"Datum", "Product", "ISIN", "Omschrijving", "Mutatie", "Unnamed: 8", "Order Id"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"Missing expected columns: {sorted(missing)}")
+
+    return df
+
+
+def row_to_event(row: pd.Series) -> CashEvent:
+    product = norm_str(row.get("Product")) or CASH_PRODUCT
+    isin = norm_str(row.get("ISIN"))
+    description = norm_str(row.get("Omschrijving"))
+    currency = norm_str(row.get("Mutatie"))
+    amount = parse_decimal_eu(row.get("Unnamed: 8"))
+    order_id = norm_str(row.get("Order Id"))
+
+    return CashEvent(
+        date=norm_str(row.get("Datum")),
+        product=product,
+        isin=isin,
+        description=description,
+        currency=currency,
+        amount=amount,
+        order_id=order_id,
+    )
